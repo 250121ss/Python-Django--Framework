@@ -1,0 +1,145 @@
+PORT :  8080 , 8000
+
+sudo apt update
+sudo chmod -R 755 /home/username
+
+sudo su
+apt update -y
+
+==== Nginx package  === 
+
+apt-get install python3-pip python3-dev libpq-dev curl nginx -y
+
+=== Install and Configure PostgreSQL ===
+
+apt install postgresql postgresql-contrib -y
+sudo -i -u postgres
+psql
+CREATE DATABASE djangodb;
+CREATE USER djangouser WITH PASSWORD 'password';
+ALTER ROLE djangouser SET client_encoding TO 'utf8';
+ALTER ROLE djangouser SET default_transaction_isolation TO 'read committed';
+ALTER ROLE djangouser SET timezone TO 'UTC';
+GRANT ALL PRIVILEGES ON DATABASE djangodb TO djangouser;
+\q
+exit
+
+==== Python Virtual Environment ===
+
+pip3 install --upgrade pip
+pip --version
+pip3 install virtualenv
+mkdir /var/www/html/djangoapp
+cd /var/www/html/djangoapp
+virtualenv djangoenv
+source djangoenv/bin/activate
+pip install django gunicorn psycopg2-binary
+
+=== Install and Configure Django  ===
+
+django-admin startproject djangoapp .
+
+vi /var/www/html/djangoapp/djangoapp/settings.py
+
+=== Change the following line with your domain name  (or)  IP address:   === 
+
+ALLOWED_HOSTS = ['domain.com', 'localhost']
+
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': 'djangodb',
+        'USER': 'djangouser',
+        'PASSWORD': 'password',
+        'HOST': 'localhost',
+        'PORT': '',
+
+==
+
+STATIC_URL = '/static/'
+import os
+STATIC_ROOT = os.path.join(BASE_DIR, 'static/')
+
+===  
+./manage.py makemigrations
+./manage.py migrate
+./manage.py createsuperuser
+./manage.py collectstatic
+./manage.py runserver 0.0.0.0:8000
+
+CTRL + C
+
+===Verify Django with Gunicorn ==
+
+gunicorn --bind 0.0.0.0:8000 djangoapp.wsgi
+
+CTRL + c
+deactivate
+
+=== Create a Systemd Service File for Gunicorn  == 
+
+vi /etc/systemd/system/gunicorn.socket
+
+add ++++++++++++++++
+
+[Unit]
+Description=gunicorn socket
+
+[Socket]
+ListenStream=/run/gunicorn.sock
+
+[Install]
+WantedBy=sockets.target
+
+++++
+
+vi /etc/systemd/system/gunicorn.service
+
+[Unit]
+Description=gunicorn daemon
+Requires=gunicorn.socket
+After=network.target
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/var/www/html/djangoapp/
+ExecStart=/var/www/html/djangoapp/djangoenv/bin/gunicorn --access-logfile - --workers 3 --bind unix:/run/gunicorn.sock          djangoapp.wsgi:application
+
+[Install]
+WantedBy=multi-user.target
+
+===
+
+chown -R www-data:root /var/www/html/djangoapp
+
+systemctl daemon-reload
+systemctl start gunicorn.socket
+systemctl enable gunicorn.socket
+systemctl status gunicorn.socket
+
+=== Configure Nginx as a Reverse Proxy===
+
+vi  /etc/nginx/conf.d/django.conf
+
+
+server {
+     listen 80;
+     server_name domain.com;
+    location = /favicon.ico { access_log off; log_not_found off; }
+
+
+    location /static/ {
+         root /var/www/html/djangoapp/djangoapp;
+     }
+
+    location / {
+         include proxy_params;
+         proxy_pass http://unix:/run/gunicorn.sock;
+     }
+}
+
+
+nginx -t
+systemctl restart nginx
+systemctl status nginx
